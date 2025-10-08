@@ -1,6 +1,6 @@
 # Website Image Monitor
 
-AWS Lambda function that monitors a website for broken images hosted on a specific IP address and sends email alerts via Amazon SES.
+AWS Lambda function that monitors my website for broken images and sends email alerts via Amazon SES. If the image is referenced by IP address or cannot be retrieved (status != 2xx) then it will send me an email.
 
 ## Overview
 
