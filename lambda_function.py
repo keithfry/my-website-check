@@ -53,35 +53,24 @@ def lambda_handler(event, context):
                     print(f"Image is accessible: {src}")
         
         # Report results
-        if ip_images:
-            if broken_images:
-                # Send alert email
-                send_alert_email(broken_images, ip_images)
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        'status': 'ALERT_SENT',
-                        'message': f'Found {len(broken_images)} broken images out of {len(ip_images)} IP-based images',
-                        'broken_images': broken_images
-                    })
-                }
-            else:
-                print(f"All {len(ip_images)} IP-based images are working fine")
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        'status': 'OK',
-                        'message': f'Found {len(ip_images)} IP-based images, all working',
-                        'images': ip_images
-                    })
-                }
+        if ip_images or broken_images:
+            # Send alert email
+            send_alert_email(broken_images, ip_images)
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'status': 'ALERT_SENT',
+                    'message': f'Found {len(broken_images)} broken images out of {len(ip_images)} IP-based images',
+                    'broken_images': broken_images
+                })
+            }
         else:
-            print(f"No images found with IP address {TARGET_IP}")
+            print(f"No images found with IP address {TARGET_IP} or broken images")
             return {
                 'statusCode': 200,
                 'body': json.dumps({
                     'status': 'NO_IP_IMAGES',
-                    'message': f'No images found with IP {TARGET_IP}'
+                    'message': f'No images found with IP {TARGET_IP} or broken images'
                 })
             }
             
