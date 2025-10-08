@@ -45,12 +45,12 @@ def lambda_handler(event, context):
                 ip_images.append(src)
                 print(f"Found image with target IP: {src}")
                 
-                # Test if the image is broken
-                if is_image_broken(src):
-                    broken_images.append(src)
-                    print(f"Image is BROKEN: {src}")
-                else:
-                    print(f"Image is accessible: {src}")
+            # Test if the image is broken
+            if is_image_broken(src):
+                broken_images.append(src)
+                print(f"Image is BROKEN: {src}")
+            else:
+                print(f"Image is accessible: {src}")
         
         # Report results
         if ip_images or broken_images:
