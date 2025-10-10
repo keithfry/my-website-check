@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# uv
+.uv/
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# AWS
+*.zip
+package/
+response.json
+
+# Environment variables
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vendored dependencies (old)
+urllib3/
+idna/
+charset_normalizer/
+certifi/
+requests/
+bs4/
+soupsieve/
+typing_extensions.py
+*.dist-info/
+bin/
