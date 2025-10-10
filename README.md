@@ -236,14 +236,37 @@ The function returns JSON responses:
 
 ## Monitoring
 
-Check CloudWatch Logs for execution details:
-- Log group: `/aws/lambda/<function-name>`
-- View scan results, image counts, and error messages
+### CloudWatch Logs
+
+View real-time logs from your Lambda function:
+
+```bash
+# Tail logs (live streaming)
+aws logs tail /aws/lambda/check-my-website --follow
+
+# View recent logs
+aws logs tail /aws/lambda/check-my-website --since 1h
+
+# View logs from specific time range
+aws logs tail /aws/lambda/check-my-website --since 2025-01-01T00:00:00 --until 2025-01-01T23:59:59
+```
+
+### AWS Console
+
+1. Go to [CloudWatch Console](https://console.aws.amazon.com/cloudwatch/)
+2. Navigate to **Logs** → **Log groups**
+3. Find `/aws/lambda/check-my-website`
+4. View execution details, scan results, image counts, and error messages
+
+### What You'll See in Logs
+
+- Website scan start/completion
+- Number of images found
+- IP-based image detections
+- Broken image alerts
+- Email sending confirmations
+- Error messages (if any)
 
 ## License
 
 MIT
-
-
-## Improvements
-1. Make a CloudFormation script to deploy
