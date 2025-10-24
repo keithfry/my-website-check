@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 from botocore.exceptions import ClientError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configuration
 TARGET_IP = "3.23.206.196"
@@ -86,15 +87,24 @@ def lambda_handler(event, context):
     """
     Main Lambda handler function.
     Scans multiple pages for images using specific IP address and broken images.
+    Uses parallel execution to avoid timeouts.
     """
     try:
         all_results = []
 
-        # Check each page
-        for page_path in PAGES_TO_CHECK:
-            full_url = WEBSITE_URL.rstrip('/') + page_path
-            result = check_page(full_url)
-            all_results.append(result)
+        # Build full URLs
+        urls_to_check = [WEBSITE_URL.rstrip('/') + page_path for page_path in PAGES_TO_CHECK]
+
+        # Check pages in parallel using ThreadPoolExecutor
+        print(f"Checking {len(urls_to_check)} pages in parallel...")
+        with ThreadPoolExecutor(max_workers=len(urls_to_check)) as executor:
+            # Submit all check_page tasks
+            future_to_url = {executor.submit(check_page, url): url for url in urls_to_check}
+
+            # Collect results as they complete
+            for future in as_completed(future_to_url):
+                result = future.result()
+                all_results.append(result)
 
         # Send summary email with all results
         send_summary_email(all_results)
