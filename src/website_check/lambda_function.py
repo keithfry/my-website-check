@@ -8,86 +8,113 @@ from botocore.exceptions import ClientError
 # Configuration
 TARGET_IP = "3.23.206.196"
 WEBSITE_URL = "https://www.keithfry.net"
+PAGES_TO_CHECK = [
+    "/",
+    "/resume",
+    "/services/",
+    "/maker/",
+]
 SENDER_EMAIL = "alerts@keithfry.net"
 RECIPIENT_EMAIL = "keithfry@gmail.com"
 AWS_REGION = "us-east-2"
 
 ses_client = boto3.client('ses', region_name=AWS_REGION)
 
-def lambda_handler(event, context):
+def check_page(page_url):
     """
-    Main Lambda handler function.
-    Scans website for images using specific IP address and sends alert if broken.
+    Check a single page for images.
+    Returns dict with page results.
     """
     try:
-        print(f"Starting scan of {WEBSITE_URL}")
-        
+        print(f"Starting scan of {page_url}")
+
         # Fetch the webpage
         headers = {
             "X-Agent": "aws-lambda"
         }
-        response = requests.get(WEBSITE_URL, timeout=10, headers=headers)
+        response = requests.get(page_url, timeout=10, headers=headers)
         response.raise_for_status()
-        
+
         # Parse HTML
         soup = BeautifulSoup(response.text, 'html.parser')
-        
+
         # Find all image tags
         images = soup.find_all('img')
         print(f"Found {len(images)} total images on page")
-        
+
         # Look for images with the target IP
         broken_images = []
         ip_images = []
-        
+
         for img in images:
             src = img.get('src', '')
-            
+
             # Check if the image source contains the target IP
             if TARGET_IP in src:
                 ip_images.append(src)
                 print(f"Found image with target IP: {src}")
-                
+
             # Test if the image is broken
             if is_image_broken(src):
                 broken_images.append(src)
                 print(f"Image is BROKEN: {src}")
             else:
                 print(f"Image is accessible: {src}")
-        
-        # Report results
-        if ip_images or broken_images:
-            # Send alert email
-            send_alert_email(broken_images, ip_images)
-            return {
-                'statusCode': 200,
-                'body': json.dumps({
-                    'status': 'ALERT_SENT',
-                    'message': f'Found {len(broken_images)} broken images out of {len(ip_images)} IP-based images',
-                    'broken_images': broken_images
-                })
-            }
-        else:
-            print(f"No images found with IP address {TARGET_IP} or broken images")
-            return {
-                'statusCode': 200,
-                'body': json.dumps({
-                    'status': 'NO_IP_IMAGES',
-                    'message': f'No images found with IP {TARGET_IP} or broken images'
-                })
-            }
-            
-    except requests.RequestException as e:
-        error_msg = f"Error fetching website: {str(e)}"
-        print(error_msg)
-        send_error_email(error_msg)
+
         return {
-            'statusCode': 500,
+            'url': page_url,
+            'status': 'success',
+            'total_images': len(images),
+            'ip_images': ip_images,
+            'broken_images': broken_images,
+            'error': None
+        }
+
+    except Exception as e:
+        error_msg = f"Error checking page {page_url}: {str(e)}"
+        print(error_msg)
+        return {
+            'url': page_url,
+            'status': 'error',
+            'total_images': 0,
+            'ip_images': [],
+            'broken_images': [],
+            'error': str(e)
+        }
+
+def lambda_handler(event, context):
+    """
+    Main Lambda handler function.
+    Scans multiple pages for images using specific IP address and broken images.
+    """
+    try:
+        all_results = []
+
+        # Check each page
+        for page_path in PAGES_TO_CHECK:
+            full_url = WEBSITE_URL.rstrip('/') + page_path
+            result = check_page(full_url)
+            all_results.append(result)
+
+        # Send summary email with all results
+        send_summary_email(all_results)
+
+        # Count totals for response
+        total_broken = sum(len(r['broken_images']) for r in all_results)
+        total_ip_images = sum(len(r['ip_images']) for r in all_results)
+        failed_pages = sum(1 for r in all_results if r['status'] == 'error')
+
+        return {
+            'statusCode': 200,
             'body': json.dumps({
-                'status': 'ERROR',
-                'message': error_msg
+                'status': 'COMPLETE',
+                'pages_checked': len(all_results),
+                'pages_failed': failed_pages,
+                'total_broken_images': total_broken,
+                'total_ip_images': total_ip_images
             })
         }
+
     except Exception as e:
         error_msg = f"Unexpected error: {str(e)}"
         print(error_msg)
@@ -124,56 +151,138 @@ def is_image_broken(image_url):
         # Any connection error means the image is broken
         return True
 
-def send_alert_email(broken_images, all_ip_images):
+def send_summary_email(all_results):
     """
-    Send email alert via Amazon SES when broken images are detected.
+    Send single summary email aggregating results from all pages.
     """
-    subject = f"⚠️ Website Alert: Broken Images Detected on {WEBSITE_URL}"
-    
-    body_text = f"""
-Website Monitoring Alert
+    # Aggregate results
+    total_pages = len(all_results)
+    successful_pages = sum(1 for r in all_results if r['status'] == 'success')
+    failed_pages = [r for r in all_results if r['status'] == 'error']
+    total_images = sum(r['total_images'] for r in all_results if r['status'] == 'success')
+
+    # Group broken images by page
+    pages_with_broken = [r for r in all_results if r['status'] == 'success' and r['broken_images']]
+    total_broken = sum(len(r['broken_images']) for r in pages_with_broken)
+
+    # Group IP images by page
+    pages_with_ip = [r for r in all_results if r['status'] == 'success' and r['ip_images']]
+    total_ip = sum(len(r['ip_images']) for r in pages_with_ip)
+
+    # Only send email if there are issues
+    if not (pages_with_broken or pages_with_ip or failed_pages):
+        print("No issues found across all pages. Skipping email.")
+        return
+
+    # Build subject
+    issues = []
+    if pages_with_broken:
+        issues.append(f"{total_broken} Broken Images")
+    if pages_with_ip:
+        issues.append(f"{total_ip} IP-Based Images")
+    if failed_pages:
+        issues.append(f"{len(failed_pages)} Failed Pages")
+
+    subject = f"⚠️ Website Alert: {', '.join(issues)} Found"
+
+    # Build text body
+    body_text = f"""Website Monitoring Alert - Multi-Page Scan
 
 Website: {WEBSITE_URL}
 Target IP: {TARGET_IP}
 
-BROKEN IMAGES FOUND: {len(broken_images)} out of {len(all_ip_images)} IP-based images are broken.
+SUMMARY:
+- Pages Checked: {total_pages}
+- Pages Successful: {successful_pages}
+- Pages Failed: {len(failed_pages)}
+- Total Images Scanned: {total_images}
+- Broken Images Found: {total_broken}
+- IP-Based Images Found: {total_ip}
 
-Broken Image URLs:
-{chr(10).join('- ' + img for img in broken_images)}
+"""
 
-All IP-based Images:
-{chr(10).join('- ' + img for img in all_ip_images)}
+    if pages_with_broken:
+        body_text += "\n=== BROKEN IMAGES ===\n\n"
+        for result in pages_with_broken:
+            body_text += f"Page: {result['url']}\n"
+            for img in result['broken_images']:
+                body_text += f"  - {img}\n"
+            body_text += "\n"
 
-Please check the website and fix the broken image references.
+    if pages_with_ip:
+        body_text += "\n=== IP-BASED IMAGES ===\n\n"
+        for result in pages_with_ip:
+            body_text += f"Page: {result['url']}\n"
+            for img in result['ip_images']:
+                body_text += f"  - {img}\n"
+            body_text += "\n"
 
+    if failed_pages:
+        body_text += "\n=== FAILED PAGES ===\n\n"
+        for result in failed_pages:
+            body_text += f"Page: {result['url']}\n"
+            body_text += f"Error: {result['error']}\n\n"
+
+    body_text += """
 ---
 This is an automated alert from your AWS Lambda monitoring function.
 """
-    
+
+    # Build HTML body
     body_html = f"""
     <html>
     <head></head>
     <body>
-        <h2 style="color: #d9534f;">⚠️ Website Monitoring Alert</h2>
+        <h2 style="color: #d9534f;">⚠️ Website Monitoring Alert - Multi-Page Scan</h2>
         <p><strong>Website:</strong> {WEBSITE_URL}</p>
         <p><strong>Target IP:</strong> {TARGET_IP}</p>
-        
-        <p style="color: #d9534f; font-weight: bold;">
-            BROKEN IMAGES FOUND: {len(broken_images)} out of {len(all_ip_images)} IP-based images are broken.
-        </p>
-        
-        <h3>Broken Image URLs:</h3>
+
+        <h3>Summary</h3>
         <ul>
-            {''.join(f'<li><code>{img}</code></li>' for img in broken_images)}
+            <li>Pages Checked: {total_pages}</li>
+            <li>Pages Successful: {successful_pages}</li>
+            <li>Pages Failed: {len(failed_pages)}</li>
+            <li>Total Images Scanned: {total_images}</li>
+            <li style="color: #d9534f;"><strong>Broken Images Found: {total_broken}</strong></li>
+            <li style="color: #f0ad4e;"><strong>IP-Based Images Found: {total_ip}</strong></li>
         </ul>
-        
-        <h3>All IP-based Images:</h3>
+"""
+
+    if pages_with_broken:
+        body_html += """
+        <h3 style="color: #d9534f;">Broken Images</h3>
+"""
+        for result in pages_with_broken:
+            body_html += f"""
+        <h4>{result['url']}</h4>
         <ul>
-            {''.join(f'<li><code>{img}</code></li>' for img in all_ip_images)}
+            {''.join(f'<li><code>{img}</code></li>' for img in result['broken_images'])}
         </ul>
-        
-        <p>Please check the website and fix the broken image references.</p>
-        
+"""
+
+    if pages_with_ip:
+        body_html += """
+        <h3 style="color: #f0ad4e;">IP-Based Images</h3>
+"""
+        for result in pages_with_ip:
+            body_html += f"""
+        <h4>{result['url']}</h4>
+        <ul>
+            {''.join(f'<li><code>{img}</code></li>' for img in result['ip_images'])}
+        </ul>
+"""
+
+    if failed_pages:
+        body_html += """
+        <h3 style="color: #333;">Failed Pages</h3>
+"""
+        for result in failed_pages:
+            body_html += f"""
+        <h4>{result['url']}</h4>
+        <p style="color: #d9534f;">{result['error']}</p>
+"""
+
+    body_html += """
         <hr>
         <p style="font-size: 12px; color: #666;">
             This is an automated alert from your AWS Lambda monitoring function.
@@ -181,7 +290,7 @@ This is an automated alert from your AWS Lambda monitoring function.
     </body>
     </html>
     """
-    
+
     try:
         response = ses_client.send_email(
             Source=SENDER_EMAIL,
@@ -205,7 +314,7 @@ This is an automated alert from your AWS Lambda monitoring function.
                 }
             }
         )
-        print(f"Alert email sent successfully. Message ID: {response['MessageId']}")
+        print(f"Summary email sent successfully. Message ID: {response['MessageId']}")
     except ClientError as e:
         print(f"Error sending email: {e.response['Error']['Message']}")
 
