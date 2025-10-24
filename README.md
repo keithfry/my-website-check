@@ -1,14 +1,15 @@
 # Website Image Monitor
 
-AWS Lambda function that monitors my website for broken images and sends email alerts via Amazon SES. If the image is referenced by IP address or cannot be retrieved (status != 2xx) then it will send me an email.
+AWS Lambda function that monitors multiple pages on my website for broken images and sends email alerts via Amazon SES. If an image is referenced by IP address or cannot be retrieved (status != 2xx) then it will send me an email with results aggregated across all checked pages.
 
 ## Overview
 
 This Lambda function performs the following tasks:
-- Fetches and parses a target website
+- Fetches and parses multiple pages from a target website in parallel
 - Scans for images hosted on a specific IP address
-- Tests image URLs for accessibility
-- Sends email alerts when broken images are detected
+- Tests image URLs for accessibility across all pages
+- Sends a single summary email when broken images or IP-based images are detected
+- Continues checking all pages even if some fail
 - Notifies when the monitoring script encounters errors
 
 ## Configuration
@@ -17,7 +18,13 @@ Update the following constants in `src/website_check/lambda_function.py`:
 
 ```python
 TARGET_IP = "3.23.206.196"        # IP address to monitor
-WEBSITE_URL = "https://www.keithfry.net"  # Website to scan
+WEBSITE_URL = "https://www.keithfry.net"  # Base website URL
+PAGES_TO_CHECK = [                # List of page paths to check
+    "/",
+    "/resume",
+    "/services/",
+    "/maker/",
+]
 SENDER_EMAIL = <from_email>       # SES verified sender
 RECIPIENT_EMAIL = <to_email>      # Alert recipient
 AWS_REGION = "us-east-2"          # AWS region for SES
@@ -29,8 +36,9 @@ This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 Dependencies are defined in `pyproject.toml`:
 - `boto3` - AWS SDK for Python
-- `requests` - HTTP library
-- `beautifulsoup4` - HTML parser
+- `requests` - HTTP library for fetching pages and checking images
+- `beautifulsoup4` - HTML parser for extracting image tags
+- `concurrent.futures` - ThreadPoolExecutor for parallel page checking (built-in, Python 3.2+)
 
 ### Setup with uv
 
@@ -99,6 +107,27 @@ DRY_RUN=false uv run python test_lambda.py
 - Use with caution
 
 ## AWS Setup
+
+### Lambda Configuration
+
+**Recommended Settings:**
+- **Timeout**: 60 seconds (increased from default 3 seconds to handle multi-page checking)
+- **Memory**: 128 MB (default is sufficient)
+
+To update timeout via AWS CLI:
+```bash
+aws lambda update-function-configuration \
+  --function-name check-my-website \
+  --region us-east-2 \
+  --timeout 60
+```
+
+Or update via AWS Console:
+1. Go to Lambda Console → Functions → check-my-website
+2. Navigate to **Configuration** → **General configuration**
+3. Click **Edit**
+4. Set **Timeout** to 60 seconds
+5. Click **Save**
 
 ### IAM Permissions
 
@@ -197,33 +226,35 @@ Set up an EventBridge (CloudWatch Events) rule to trigger the function:
 
 ## Return Values
 
-The function returns JSON responses:
+The function returns JSON responses with aggregated results from all checked pages:
 
-### Success - All images working
+### Success - Multi-page scan complete
 ```json
 {
   "statusCode": 200,
   "body": {
-    "status": "OK",
-    "message": "Found 5 IP-based images, all working",
-    "images": ["..."]
+    "status": "COMPLETE",
+    "pages_checked": 4,
+    "pages_failed": 0,
+    "total_broken_images": 2,
+    "total_ip_images": 0
   }
 }
 ```
 
-### Success - Broken images found
-```json
-{
-  "statusCode": 200,
-  "body": {
-    "status": "ALERT_SENT",
-    "message": "Found 2 broken images out of 5 IP-based images",
-    "broken_images": ["..."]
-  }
-}
-```
+**Response Fields:**
+- `status`: `COMPLETE` when scan finishes (even if some pages fail)
+- `pages_checked`: Total number of pages attempted
+- `pages_failed`: Number of pages that failed to load
+- `total_broken_images`: Total broken images found across all pages
+- `total_ip_images`: Total images using the target IP across all pages
 
-### Error
+**Email Behavior:**
+- Email is sent only if: broken images found, IP-based images found, or pages failed
+- Email contains results grouped by page with summary statistics
+- No email is sent if all pages check successfully with no issues
+
+### Error - Lambda execution failure
 ```json
 {
   "statusCode": 500,
@@ -233,6 +264,8 @@ The function returns JSON responses:
   }
 }
 ```
+
+**Note:** Individual page failures (404, timeout, etc.) are captured in the success response with `pages_failed` > 0. The error response is only returned if the Lambda function itself encounters an unexpected error.
 
 ## Monitoring
 
@@ -260,12 +293,14 @@ aws logs tail /aws/lambda/check-my-website --since 2025-01-01T00:00:00 --until 2
 
 ### What You'll See in Logs
 
-- Website scan start/completion
-- Number of images found
-- IP-based image detections
-- Broken image alerts
-- Email sending confirmations
-- Error messages (if any)
+- Parallel page checking initiation (e.g., "Checking 4 pages in parallel...")
+- Individual page scan start/completion for each URL
+- Number of images found per page
+- IP-based image detections per page
+- Broken image alerts per page
+- Email sending confirmations with summary
+- Page-level errors (404, timeouts, etc.)
+- Lambda execution errors (if any)
 
 ## License
 
