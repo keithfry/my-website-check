@@ -1,6 +1,6 @@
 [project]
 name = "my-website-check"
-version = "0.1.0"
+version = "1.0.0"
 description = "AWS Lambda function to monitor website for broken images"
 requires-python = ">=3.9"
 dependencies = [
