@@ -38,6 +38,9 @@ response.json
 .DS_Store
 Thumbs.db
 
+# Git worktrees
+.worktrees/
+
 # Vendored dependencies (old)
 urllib3/
 idna/
